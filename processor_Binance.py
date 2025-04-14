@@ -190,7 +190,7 @@ class BinanceProcessor():
 
     def get_binance_bars(self, start_date, end_date, kline_size, symbol):
         data_df = pd.DataFrame()
-        klines = self.binance_client.get_historical_klines(symbol, kline_size, start_date, end_date)
+        klines = self.binance_client.get_historical_klines(symbol, kline_size, start_date, end_date,1000)
         data = pd.DataFrame(klines,
                             columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_av',
                                      'trades', 'tb_base_av', 'tb_quote_av', 'ignore'])
