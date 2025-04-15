@@ -30,6 +30,8 @@ dependencies = [
   "torch>=2.6.0",
   "torchaudio>=2.6.0",
   "torchvision>=0.21.0",
+  "matplotlib-inline>=0.1.7",
+  "ipython>=8.18.1",
 ]
 [tool.uv.sources]
 torch = [
