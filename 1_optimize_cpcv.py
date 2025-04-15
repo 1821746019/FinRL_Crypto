@@ -39,6 +39,11 @@ import datetime
 import pickle
 import os
 import sys
+import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor
+import torch
+import argparse
+import numpy as np
 
 from distutils.dir_util import copy_tree
 from environment_Alpaca import CryptoEnvAlpaca
@@ -125,7 +130,8 @@ def sample_hyperparams(trial):
                                                  [average_episode_step_min, round(1.5 * average_episode_step_min),
                                                   2 * average_episode_step_min]),
         "eval_time_gap": trial.suggest_categorical("eval_time_gap", [60]),
-        "break_step": trial.suggest_categorical("break_step", [3e4, 4.5e4, 6e4])
+        "break_step": trial.suggest_categorical("break_step", [3e4, 4.5e4, 6e4]),
+        "worker_num": trial.suggest_categorical("worker_num", [4])
     }
 
     # environment normalization and lookback
@@ -158,14 +164,26 @@ def set_pickle_attributes(trial, model_name, TIMEFRAME, TRAIN_START_DATE, TRAIN_
 def load_saved_data(TIMEFRAME, no_candles_for_train):
     data_folder = './data/' + TIMEFRAME + '_' + str(no_candles_for_train + no_candles_for_val)
     print('\nLOADING DATA FOLDER: ', data_folder, '\n')
+    
+    # 使用mmap_mode加载大型数组提高性能
     with open(data_folder + '/data_from_processor', 'rb') as handle:
         data_from_processor = pickle.load(handle)
-    with open(data_folder + '/price_array', 'rb') as handle:
-        price_array = pickle.load(handle)
-    with open(data_folder + '/tech_array', 'rb') as handle:
-        tech_array = pickle.load(handle)
-    with open(data_folder + '/time_array', 'rb') as handle:
-        time_array = pickle.load(handle)
+    
+    # 对于较大的数组，考虑使用NumPy的mmap_mode
+    try:
+        price_array = np.load(data_folder + '/price_array.npy', mmap_mode='r')
+        tech_array = np.load(data_folder + '/tech_array.npy', mmap_mode='r')
+        with open(data_folder + '/time_array', 'rb') as handle:
+            time_array = pickle.load(handle)
+    except (FileNotFoundError, ValueError):
+        # 如果.npy文件不存在，回退到常规方式
+        with open(data_folder + '/price_array', 'rb') as handle:
+            price_array = pickle.load(handle)
+        with open(data_folder + '/tech_array', 'rb') as handle:
+            tech_array = pickle.load(handle)
+        with open(data_folder + '/time_array', 'rb') as handle:
+            time_array = pickle.load(handle)
+    
     return data_from_processor, price_array, tech_array, time_array
 
 
@@ -230,6 +248,16 @@ def objective(trial, name_test, model_name, cwd, res_timestamp, gpu_id):
 
     # Sample set of hyperparameters
     erl_params, env_params = sample_hyperparams(trial)
+    
+    # 如果gpu_id是列表，表示多GPU训练
+    if isinstance(gpu_id, list):
+        print(f"\n使用多GPU训练: {gpu_id}")
+    else:
+        # 设置CPU线程数
+        os.environ["OMP_NUM_THREADS"] = "4"  # OpenMP线程
+        os.environ["MKL_NUM_THREADS"] = "4"  # MKL线程
+        torch.set_num_threads(4)  # PyTorch CPU线程
+        print("\n使用单GPU训练")
 
     # Load data from hard disk
     data_from_processor, price_array, tech_array, time_array = load_saved_data(TIMEFRAME, no_candles_for_train)
@@ -313,6 +341,32 @@ def objective(trial, name_test, model_name, cwd, res_timestamp, gpu_id):
 def optimize(name_test, model_name, gpu_id):
     # Auto naming
     res_timestamp = print_config()
+    
+    # 检查GPU数量并设置多GPU训练
+    available_gpus = []
+    if isinstance(gpu_id, int) and gpu_id >= 0:
+        # 如果指定了单个GPU，检查系统中可用的GPU数量
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            if gpu_count > 1:
+                # 使用所有可用GPU
+                available_gpus = list(range(gpu_count))
+                print(f"检测到{gpu_count}个GPU，将使用多GPU训练模式")
+            else:
+                available_gpus = [gpu_id]
+                print(f"只有1个GPU可用，使用GPU {gpu_id}进行训练")
+        else:
+            available_gpus = [-1]  # 使用CPU
+            print("未检测到可用GPU，将使用CPU训练")
+    elif isinstance(gpu_id, list):
+        # 已经指定了多个GPU
+        available_gpus = gpu_id
+        print(f"使用指定的GPU列表: {gpu_id}")
+    else:
+        # 使用CPU
+        available_gpus = [-1]
+        print("使用CPU训练")
+        
     name_test = f"{name_test}_CPCV_{model_name}_{TIMEFRAME}_{H_TRIALS}H_{round((no_candles_for_train + no_candles_for_val) / 1000)}k"
     cwd = f"./train_results/cwd_tests/{name_test}"
     path = f"./train_results/{res_timestamp}_{name_test}/"
@@ -325,7 +379,7 @@ def optimize(name_test, model_name, gpu_id):
     global study
 
     def obj_with_argument(trial):
-        return objective(trial, name_test, model_name, cwd, res_timestamp, gpu_id)
+        return objective(trial, name_test, model_name, cwd, res_timestamp, available_gpus)
 
     sampler = optuna.samplers.TPESampler(multivariate=True, seed=SEED_CFG)
     study = optuna.create_study(
@@ -348,13 +402,29 @@ def optimize(name_test, model_name, gpu_id):
 # Main
 #######################################################################################
 
-gpu_id = 0
-name_model = 'ppo'
-name_test = 'model'
-
-print('\nStarting CPCV optimization with:')
-print('drl algorithm:       ', name_model)
-print('name_test:           ', name_test)
-print('gpu_id:              ', gpu_id, '\n')
-
-optimize(name_test, name_model, gpu_id)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='FinRL_Crypto多GPU训练优化')
+    parser.add_argument('--gpus', type=str, default="0", help='要使用的GPU ID, 多个ID用逗号分隔，例如"0,1"')
+    parser.add_argument('--model', type=str, default='ppo', help='DRL算法名称 (ppo, sac, ddpg, td3)')
+    parser.add_argument('--name', type=str, default='model', help='模型名称')
+    
+    args = parser.parse_args()
+    
+    # 处理GPU参数
+    gpu_ids = args.gpus.split(',')
+    if len(gpu_ids) == 1:
+        # 单GPU模式
+        gpu_id = int(gpu_ids[0])
+    else:
+        # 多GPU模式
+        gpu_id = [int(id) for id in gpu_ids if id.strip()]
+    
+    name_model = args.model.lower()
+    name_test = args.name
+    
+    print('\n开始CPCV优化:')
+    print('DRL算法:       ', name_model)
+    print('测试名称:      ', name_test)
+    print('GPU设置:       ', gpu_id if isinstance(gpu_id, int) else f"多GPU模式: {gpu_id}", '\n')
+    
+    optimize(name_test, name_model, gpu_id)

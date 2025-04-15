@@ -58,6 +58,18 @@ def train_agent(price_array, tech_array, train_indices, env, model_name, env_par
     price_array_train = price_array[train_indices, :]
     tech_array_train = tech_array[train_indices, :]
 
+    # 确保worker_num参数存在，否则设置默认值为4
+    if 'worker_num' not in erl_params:
+        erl_params['worker_num'] = 4
+        print('Setting default worker_num to 4 for parallel processing')
+    
+    # 设置环境参数以启用多线程
+    env_config = {
+        "price_array": price_array_train,
+        "tech_array": tech_array_train,
+        "if_train": True,
+    }
+
     agent = DRLAgent_erl(env=env,
                          price_array=price_array_train,
                          tech_array=tech_array_train,
@@ -69,6 +81,11 @@ def train_agent(price_array, tech_array, train_indices, env, model_name, env_par
                             model_kwargs=erl_params,
                             )
 
+    # 确保使用多线程训练
+    if hasattr(model, 'worker_num'):
+        model.worker_num = erl_params['worker_num']
+        print(f"Using {model.worker_num} workers for training")
+    
     agent.train_model(model=model,
                       cwd=cwd,
                       total_timesteps=break_step
