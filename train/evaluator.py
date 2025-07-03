@@ -10,7 +10,7 @@ class Evaluator:  # [ElegantRL.2022.01.01]
         self.recorder_path = f"{cwd}/recorder.npy"
 
         self.cwd = cwd
-        self.agent_id = agent_id
+        self.agent_id = agent_id[0] if isinstance(agent_id, list) else agent_id
         self.eval_env = eval_env
         self.eval_gap = args.eval_gap
         self.eval_times1 = max(1, int(args.eval_times / np.e))
