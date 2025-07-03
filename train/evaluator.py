@@ -31,7 +31,7 @@ class Evaluator:  # [ElegantRL.2022.01.01]
 
     def evaluate_save_and_plot(
         self, act, steps, r_exp, log_tuple
-    ) -> (bool, bool):  # 2021-09-09
+    ) -> tuple[bool, bool]:  # 2021-09-09
         self.total_step += steps  # update total training steps
 
         if time.time() - self.eval_time < self.eval_gap:
@@ -139,7 +139,7 @@ class Evaluator:  # [ElegantRL.2022.01.01]
 """util"""
 
 
-def get_episode_return_and_step(env, act) -> (float, int):  # [ElegantRL.2022.01.01]
+def get_episode_return_and_step(env, act) -> tuple[float, int]:  # [ElegantRL.2022.01.01]
     """Usage
     eval_times = 4
     net_dim = 2 ** 7

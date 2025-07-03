@@ -89,7 +89,7 @@ class CryptoEnvAlpaca:  # custom env
         state = self.get_state()
         return state
 
-    def step(self, actions) -> (np.ndarray, float, bool, None):
+    def step(self, actions) -> tuple[np.ndarray, float, bool, None]:
         self.time += 1
 
         # if a stock is held add to its cooldown
